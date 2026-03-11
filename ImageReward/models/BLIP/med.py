@@ -40,7 +40,19 @@ except ImportError:
     # Compatibility for later versions of transformers
     from transformers.modeling_utils import PreTrainedModel
     from transformers.pytorch_utils import apply_chunking_to_forward
-    from transformers.pytorch_utils import find_pruneable_heads_and_indices
+    try:
+        from transformers.pytorch_utils import find_pruneable_heads_and_indices
+    except ImportError:
+        # Fallback for transformers >= 4.40.0 where this function was removed
+        from typing import List, Set
+        def find_pruneable_heads_and_indices(
+            heads: List[int], n_heads: int, head_dim: int, already_pruned_heads: Set[int]
+        ):
+            mask = torch.ones(n_heads, head_dim)
+            for head in set(heads) - already_pruned_heads:
+                mask[head] = 0
+            mask = mask.view(-1).contiguous().eq(1)
+            return set(heads) - already_pruned_heads, torch.arange(len(mask))[mask].long()
     from transformers.pytorch_utils import prune_linear_layer
 
 from transformers.utils import logging
@@ -589,7 +601,8 @@ class BertModel(BertPreTrainedModel):
 
         self.pooler = BertPooler(config) if add_pooling_layer else None
 
-        self.init_weights()
+        # self.init_weights()
+        self.post_init()
  
 
     def get_input_embeddings(self):
@@ -767,7 +780,9 @@ class BertModel(BertPreTrainedModel):
         # attention_probs has shape bsz x n_heads x N x N
         # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        
+        # head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        head_mask = [None] * self.config.num_hidden_layers
         
         if encoder_embeds is None:
             embedding_output = self.embeddings(
